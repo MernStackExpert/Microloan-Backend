@@ -1,82 +1,199 @@
 import express from "express";
+const app = express();
 import cors from "cors";
 import dotenv from "dotenv";
-import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
-
-dotenv.config();
-
-const app = express();
+import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 const port = process.env.PORT || 3000;
 
+// middleware
 app.use(cors());
 app.use(express.json());
+dotenv.config();
 
-// MongoDB
-const client = new MongoClient(process.env.MONGO_URI, {
-  serverApi: { version: ServerApiVersion.v1 },
+// mongodb
+const uri = process.env.MONGO_URI;
+
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
+app.get("/", (req, res) => {
+  res.send("Hello World!");
 });
 
 async function run() {
   try {
+    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     const db = client.db("loanLinkDB");
+    const userCollection = db.collection("users");
+    const loansCollection = db.collection("loans");
 
-    const users = db.collection("users");
-    const loans = db.collection("loans");
-    const applications = db.collection("applications");
+    ///////////////////Users///////////////////////////
 
-    // -----------------------------
-    //        USERS ROUTES
-    // -----------------------------
+    
 
-    // Add / Update user from Firebase login
-    app.put("/users", async (req, res) => {
-      const { name, email, photoURL } = req.body;
+    ///////////////////loans/////////////////////////
+    app.get("/loans", async (req, res) => {
+      try {
+        const { page = 1, limit = 12, search = "", category } = req.query;
 
-      const userData = {
-        name,
-        email,
-        photoURL,
-        role: "borrower",
-      };
+        const filter = {};
 
-      const result = await users.updateOne(
-        { email },
-        { $set: userData },
-        { upsert: true }
-      );
+        if (search) {
+          filter.title = { $regex: search, $options: "i" };
+        }
 
-      res.send(result);
+        if (category) {
+          filter.category = category;
+        }
+
+        const skip = (Number(page) - 1) * Number(limit);
+
+        const total = await loansCollection.countDocuments(filter);
+
+        const data = await loansCollection
+          .find(filter)
+          .skip(skip)
+          .limit(Number(limit))
+          .toArray();
+
+        res.send({
+          total,
+          page: Number(page),
+          limit: Number(limit),
+          data,
+        });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
-    // Get all users
-    app.get("/users", async (req, res) => {
-      const result = await users.find().toArray();
-      res.send(result);
+    app.post("/loans", async (req, res) => {
+      try {
+        const data = req.body;
+
+        const newLoan = {
+          ...data,
+          showOnHome: data.showOnHome || false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        const result = await loansCollection.insertOne(newLoan);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
-    // Update user role
-    app.patch("/users/role/:email", async (req, res) => {
-      const email = req.params.email;
-      const role = req.body.role;
+    app.get("/loans/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
 
-      const result = await users.updateOne({ email }, { $set: { role } });
+        const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
 
-      res.send(result);
+        if (!loan) return res.status(404).send({ message: "Loan not found" });
+
+        res.send(loan);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
+    app.put("/loans/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const update = req.body;
 
-    // Root route
-    app.get("/", (req, res) => {
-      res.send("LoanLink API is running...");
+        const result = await loansCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              ...update,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
-  } catch (e) {
-    console.error(e);
+
+    app.delete("/loans/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const result = await loansCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    app.put("/loans/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const update = req.body;
+
+        const result = await loansCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              ...update,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    //////////////////////////////////
+
+    app.patch("/loans/toggle-home/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
+        if (!loan) return res.status(404).send({ message: "Loan not found" });
+
+        const result = await loansCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { showOnHome: !loan.showOnHome } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    ////////////////////////////////////////
+
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
+  } finally {
+    // Ensures that the client will close when you finish/error
+    // await client.close();
   }
 }
-
 run().catch(console.dir);
-// Start server
+
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Example app listening on port ${port}`);
 });
