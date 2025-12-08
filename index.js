@@ -40,6 +40,24 @@ async function run() {
     const applicationCollection = db.collection("applications");
 
     ///////////////////Users///////////////////////////
+    app.get("/users", async (req, res) => {
+      try {
+        const { search } = req.query;
+        let query = {};
+        if (search) {
+          query = {
+            $or: [
+              { name: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          };
+        }
+        const result = await userCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -63,18 +81,35 @@ async function run() {
       res.send(result);
     });
 
-    // Admin: Manage User Role & Status
+    // Update User Role & Status (Admin Only)
     app.patch("/users/admin/:id", async (req, res) => {
-      const id = req.params.id;
-      const { role, status } = req.body;
-      const filter = { _id: new ObjectId(id) };
-      
-      let updateDoc = { $set: {} };
-      if (role) updateDoc.$set.role = role;
-      if (status) updateDoc.$set.status = status;
+      try {
+        const id = req.params.id;
+        const { role, status, suspensionReason } = req.body;
+        const filter = { _id: new ObjectId(id) };
 
-      const result = await userCollection.updateOne(filter, updateDoc);
-      res.send(result);
+        let updateDoc = {
+          $set: {},
+        };
+
+        if (role) updateDoc.$set.role = role;
+        if (status) updateDoc.$set.status = status;
+
+        // If suspending, save the reason
+        if (status === "suspended" && suspensionReason) {
+          updateDoc.$set.suspensionReason = suspensionReason;
+        }
+
+        // If reactivating, clear the reason
+        if (status === "active") {
+          updateDoc.$set.suspensionReason = null;
+        }
+
+        const result = await userCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     ///////////////////loans/////////////////////////
@@ -246,7 +281,7 @@ async function run() {
 
     /////////////////// application///////////////
 
-// ================== APPLICATION APIs ==================
+    // ================== APPLICATION APIs ==================
 
     // 1. Create Loan Application (POST) - User Applies for Loan
     app.post("/applications", async (req, res) => {
@@ -256,9 +291,9 @@ async function run() {
         // Default fields according to requirements
         const newApplication = {
           ...application,
-          status: "pending",         
-          feeStatus: "unpaid",       
-          createdAt: new Date()  
+          status: "pending",
+          feeStatus: "unpaid",
+          createdAt: new Date(),
         };
 
         const result = await applicationCollection.insertOne(newApplication);
@@ -269,7 +304,7 @@ async function run() {
     });
 
     // 2. Get Applications (GET) - For Admin (All) & Manager (Filter by Status)
-    // Usage: 
+    // Usage:
     // Admin All: /applications
     // Manager Pending: /applications?status=pending
     // Manager Approved: /applications?status=approved
@@ -293,7 +328,9 @@ async function run() {
     app.get("/applications/:email", async (req, res) => {
       try {
         const email = req.params.email;
-        const result = await applicationCollection.find({ email: email }).toArray();
+        const result = await applicationCollection
+          .find({ email: email })
+          .toArray();
         res.send(result);
       } catch (error) {
         res.status(500).send({ error: error.message });
@@ -306,14 +343,14 @@ async function run() {
         const id = req.params.id;
         const { status } = req.body; // 'approved' or 'rejected'
         const filter = { _id: new ObjectId(id) };
-        
+
         let updateDoc = {
-          $set: { status: status }
+          $set: { status: status },
         };
 
         // If approved, log the approval date
-        if (status === 'approved') {
-            updateDoc.$set.approvedAt = new Date();
+        if (status === "approved") {
+          updateDoc.$set.approvedAt = new Date();
         }
 
         const result = await applicationCollection.updateOne(filter, updateDoc);
@@ -337,27 +374,25 @@ async function run() {
 
     // 6. (Challenge) Update Fee Status (PATCH) - After Payment
     app.patch("/applications/payment/:id", async (req, res) => {
-        try {
-            const id = req.params.id;
-            const { transactionId } = req.body;
-            
-            const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: {
-                    feeStatus: "paid",
-                    transactionId: transactionId,
-                    paidAt: new Date()
-                }
-            };
-            
-            const result = await applicationCollection.updateOne(filter, updateDoc);
-            res.send(result);
-        } catch (error) {
-            res.status(500).send({ error: error.message });
-        }
+      try {
+        const id = req.params.id;
+        const { transactionId } = req.body;
+
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            feeStatus: "paid",
+            transactionId: transactionId,
+            paidAt: new Date(),
+          },
+        };
+
+        const result = await applicationCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
-
-
 
     //////////////////////////////////////// MANAGER ///////////
     // Manager Stats API
@@ -396,49 +431,56 @@ async function run() {
       }
     });
 
-            //////////////// ADMIN /////////////////////
-        app.get("/admin/stats", async (req, res) => {
-          try {
-            const totalUsers = await userCollection.estimatedDocumentCount();
-            const totalLoans = await loansCollection.estimatedDocumentCount();
+    //////////////// ADMIN /////////////////////
+    app.get("/admin/stats", async (req, res) => {
+      try {
+        const totalUsers = await userCollection.estimatedDocumentCount();
+        const totalLoans = await loansCollection.estimatedDocumentCount();
 
-            const totalApplications =
-              await applicationCollection.estimatedDocumentCount();
+        const totalApplications =
+          await applicationCollection.estimatedDocumentCount();
 
-            const users = await userCollection.find().toArray();
-            const borrowers = users.filter((u) => u.role === "borrower").length;
-            const managers = users.filter((u) => u.role === "manager").length;
-            const admins = users.filter((u) => u.role === "admin").length;
+        const users = await userCollection.find().toArray();
+        const borrowers = users.filter((u) => u.role === "borrower").length;
+        const managers = users.filter((u) => u.role === "manager").length;
+        const admins = users.filter((u) => u.role === "admin").length;
 
-            res.send({
-              totalUsers,
-              totalLoans,
-              totalApplications,
-              roleStats: { borrowers, managers, admins },
-            });
-          } catch (error) {
-            res.status(500).send({ error: error.message });
-          }
+        res.send({
+          totalUsers,
+          totalLoans,
+          totalApplications,
+          roleStats: { borrowers, managers, admins },
         });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
 
-        ////////////////////////// USER STATE ///////////////////
-        // ================== USER (BORROWER) STATS API ==================
+    ////////////////////////// USER STATE ///////////////////
+    // ================== USER (BORROWER) STATS API ==================
     app.get("/user/stats/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
         // 1. Find all applications by this user
         // Note: Loan Application করার সময় ইউজার ইমেইল 'email' বা 'userEmail' ফিল্ডে সেভ করেছিলে কিনা চেক করে নিও।
-        // আমি ধরে নিচ্ছি তুমি 'email' বা 'applicantEmail' নামে সেভ করবে। 
+        // আমি ধরে নিচ্ছি তুমি 'email' বা 'applicantEmail' নামে সেভ করবে।
         // তোমার অ্যাসাইনমেন্ট রিকোয়ারমেন্ট অনুযায়ী ফর্মের ডাটা সেভ করার সময় ফিল্ডের নাম যা দিবে, এখানে তাই লিখবে।
-        const myApplications = await applicationCollection.find({ email: email }).toArray();
+        const myApplications = await applicationCollection
+          .find({ email: email })
+          .toArray();
 
         // 2. Calculate Stats
         const stats = {
           totalApplied: myApplications.length,
-          totalPending: myApplications.filter((app) => app.status === "pending").length,
-          totalApproved: myApplications.filter((app) => app.status === "approved").length,
-          totalRejected: myApplications.filter((app) => app.status === "rejected").length,
+          totalPending: myApplications.filter((app) => app.status === "pending")
+            .length,
+          totalApproved: myApplications.filter(
+            (app) => app.status === "approved"
+          ).length,
+          totalRejected: myApplications.filter(
+            (app) => app.status === "rejected"
+          ).length,
         };
 
         // 3. Get recent 5 applications
