@@ -10,10 +10,10 @@ app.use(cors());
 app.use(express.json());
 dotenv.config();
 
-const verifyFBToken = (req , res , next) => {
-  console.log('headers in the middleware ' , req.headers.authorization)
+const verifyFBToken = (req, res, next) => {
+  console.log("headers in the middleware ", req.headers.authorization);
   next();
-}
+};
 
 // mongodb
 const uri = process.env.MONGO_URI;
@@ -37,23 +37,31 @@ async function run() {
     const db = client.db("loanLinkDB");
     const userCollection = db.collection("users");
     const loansCollection = db.collection("loans");
+    const applicationCollection = db.collection("applications");
 
     ///////////////////Users///////////////////////////
 
-    app.post("/users" , async (req , res) => {
+    app.post("/users", async (req, res) => {
       const user = req.body;
       user.createdAt = new Date();
       const email = user.email;
-      const userExits = await userCollection.findOne({email})
+      const userExits = await userCollection.findOne({ email });
 
-      if(userExits){
-        return res.send({message: 'user exits'})
+      if (userExits) {
+        return res.send({ message: "user exits" });
       }
 
-      const result = await userCollection.insertOne(user)
-      res.send(result)
-    })
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
 
+    // 1. Get User Role by Email
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const result = await userCollection.findOne(query);
+      res.send(result);
+    });
 
     ///////////////////loans/////////////////////////
     // app.get("/loans", async (req, res) => {
@@ -108,7 +116,7 @@ async function run() {
 
         const data = await loansCollection.find(filter).toArray();
 
-        res.send(data); 
+        res.send(data);
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
@@ -222,7 +230,213 @@ async function run() {
       }
     });
 
-    ////////////////////////////////////////
+    /////////////////// application///////////////
+
+// ================== APPLICATION APIs ==================
+
+    // 1. Create Loan Application (POST) - User Applies for Loan
+    app.post("/applications", async (req, res) => {
+      try {
+        const application = req.body;
+
+        // Default fields according to requirements
+        const newApplication = {
+          ...application,
+          status: "pending",         
+          feeStatus: "unpaid",       
+          createdAt: new Date()  
+        };
+
+        const result = await applicationCollection.insertOne(newApplication);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // 2. Get Applications (GET) - For Admin (All) & Manager (Filter by Status)
+    // Usage: 
+    // Admin All: /applications
+    // Manager Pending: /applications?status=pending
+    // Manager Approved: /applications?status=approved
+    app.get("/applications", async (req, res) => {
+      try {
+        const { status } = req.query;
+        let query = {};
+
+        if (status) {
+          query = { status: status };
+        }
+
+        const result = await applicationCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // 3. Get Applications by User Email (GET) - For Borrower My Loans
+    app.get("/applications/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const result = await applicationCollection.find({ email: email }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // 4. Update Application Status (PATCH) - For Manager (Approve/Reject)
+    app.patch("/applications/status/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body; // 'approved' or 'rejected'
+        const filter = { _id: new ObjectId(id) };
+        
+        let updateDoc = {
+          $set: { status: status }
+        };
+
+        // If approved, log the approval date
+        if (status === 'approved') {
+            updateDoc.$set.approvedAt = new Date();
+        }
+
+        const result = await applicationCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // 5. Delete/Cancel Application (DELETE) - Only if pending
+    app.delete("/applications/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await applicationCollection.deleteOne(query);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // 6. (Challenge) Update Fee Status (PATCH) - After Payment
+    app.patch("/applications/payment/:id", async (req, res) => {
+        try {
+            const id = req.params.id;
+            const { transactionId } = req.body;
+            
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    feeStatus: "paid",
+                    transactionId: transactionId,
+                    paidAt: new Date()
+                }
+            };
+            
+            const result = await applicationCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        } catch (error) {
+            res.status(500).send({ error: error.message });
+        }
+    });
+
+
+
+    //////////////////////////////////////// MANAGER ///////////
+    // Manager Stats API
+    app.get("/manager/stats/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        // 1. Find all loans posted by this manager
+        const myLoans = await loansCollection
+          .find({ managerEmail: email })
+          .toArray();
+        const myLoanIds = myLoans.map((loan) => loan._id.toString());
+
+        const myApplications = await applicationCollection
+          .find({ loanId: { $in: myLoanIds } })
+          .toArray();
+
+        // 3. Calculate Stats
+        const stats = {
+          totalLoans: myLoans.length,
+          totalApplications: myApplications.length,
+          totalPending: myApplications.filter((app) => app.status === "pending")
+            .length,
+          totalApproved: myApplications.filter(
+            (app) => app.status === "approved"
+          ).length,
+        };
+        // 4. Get recent 5 applications
+        const recentApplications = myApplications
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .slice(0, 5);
+
+        res.send({ stats, recentApplications });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+            //////////////// ADMIN /////////////////////
+        app.get("/admin/stats", async (req, res) => {
+          try {
+            const totalUsers = await userCollection.estimatedDocumentCount();
+            const totalLoans = await loansCollection.estimatedDocumentCount();
+
+            const totalApplications =
+              await applicationCollection.estimatedDocumentCount();
+
+            const users = await userCollection.find().toArray();
+            const borrowers = users.filter((u) => u.role === "borrower").length;
+            const managers = users.filter((u) => u.role === "manager").length;
+            const admins = users.filter((u) => u.role === "admin").length;
+
+            res.send({
+              totalUsers,
+              totalLoans,
+              totalApplications,
+              roleStats: { borrowers, managers, admins },
+            });
+          } catch (error) {
+            res.status(500).send({ error: error.message });
+          }
+        });
+
+        ////////////////////////// USER STATE ///////////////////
+        // ================== USER (BORROWER) STATS API ==================
+    app.get("/user/stats/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        // 1. Find all applications by this user
+        // Note: Loan Application করার সময় ইউজার ইমেইল 'email' বা 'userEmail' ফিল্ডে সেভ করেছিলে কিনা চেক করে নিও।
+        // আমি ধরে নিচ্ছি তুমি 'email' বা 'applicantEmail' নামে সেভ করবে। 
+        // তোমার অ্যাসাইনমেন্ট রিকোয়ারমেন্ট অনুযায়ী ফর্মের ডাটা সেভ করার সময় ফিল্ডের নাম যা দিবে, এখানে তাই লিখবে।
+        const myApplications = await applicationCollection.find({ email: email }).toArray();
+
+        // 2. Calculate Stats
+        const stats = {
+          totalApplied: myApplications.length,
+          totalPending: myApplications.filter((app) => app.status === "pending").length,
+          totalApproved: myApplications.filter((app) => app.status === "approved").length,
+          totalRejected: myApplications.filter((app) => app.status === "rejected").length,
+        };
+
+        // 3. Get recent 5 applications
+        const recentApplications = myApplications
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .slice(0, 5);
+
+        res.send({ stats, recentApplications });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
