@@ -10,6 +10,11 @@ app.use(cors());
 app.use(express.json());
 dotenv.config();
 
+const verifyFBToken = (req , res , next) => {
+  console.log('headers in the middleware ' , req.headers.authorization)
+  next();
+}
+
 // mongodb
 const uri = process.env.MONGO_URI;
 
@@ -35,12 +40,61 @@ async function run() {
 
     ///////////////////Users///////////////////////////
 
-    
+    app.post("/users" , async (req , res) => {
+      const user = req.body;
+      user.createdAt = new Date();
+      const email = user.email;
+      const userExits = await userCollection.findOne({email})
+
+      if(userExits){
+        return res.send({message: 'user exits'})
+      }
+
+      const result = await userCollection.insertOne(user)
+      res.send(result)
+    })
+
 
     ///////////////////loans/////////////////////////
+    // app.get("/loans", async (req, res) => {
+
+    //   try {
+    //     const { page = 1, limit = 12, search = "", category } = req.query;
+
+    //     const filter = {};
+
+    //     if (search) {
+    //       filter.title = { $regex: search, $options: "i" };
+    //     }
+
+    //     if (category) {
+    //       filter.category = category;
+    //     }
+
+    //     const skip = (Number(page) - 1) * Number(limit);
+
+    //     const total = await loansCollection.countDocuments(filter);
+
+    //     const data = await loansCollection
+    //       .find(filter)
+    //       .skip(skip)
+    //       .limit(Number(limit))
+    //       .toArray();
+
+    //     res.send({
+    //       total,
+    //       page: Number(page),
+    //       limit: Number(limit),
+    //       data,
+    //     });
+    //   } catch (error) {
+    //     res.status(500).send({ error: error.message });
+    //   }
+    // });
+    // Get All Loans (Without Pagination Limit for Client Side Handling)
     app.get("/loans", async (req, res) => {
       try {
-        const { page = 1, limit = 12, search = "", category } = req.query;
+        const { search, category } = req.query;
 
         const filter = {};
 
@@ -48,26 +102,13 @@ async function run() {
           filter.title = { $regex: search, $options: "i" };
         }
 
-        if (category) {
+        if (category && category !== "all") {
           filter.category = category;
         }
 
-        const skip = (Number(page) - 1) * Number(limit);
+        const data = await loansCollection.find(filter).toArray();
 
-        const total = await loansCollection.countDocuments(filter);
-
-        const data = await loansCollection
-          .find(filter)
-          .skip(skip)
-          .limit(Number(limit))
-          .toArray();
-
-        res.send({
-          total,
-          page: Number(page),
-          limit: Number(limit),
-          data,
-        });
+        res.send(data); 
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
