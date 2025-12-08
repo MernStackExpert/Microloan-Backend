@@ -63,6 +63,20 @@ async function run() {
       res.send(result);
     });
 
+    // Admin: Manage User Role & Status
+    app.patch("/users/admin/:id", async (req, res) => {
+      const id = req.params.id;
+      const { role, status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      
+      let updateDoc = { $set: {} };
+      if (role) updateDoc.$set.role = role;
+      if (status) updateDoc.$set.status = status;
+
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+
     ///////////////////loans/////////////////////////
     // app.get("/loans", async (req, res) => {
 
