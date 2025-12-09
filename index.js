@@ -3,28 +3,25 @@ const app = express();
 import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
 const port = process.env.PORT || 3000;
-const jwt = require('jsonwebtoken');
-const cookieParser = require('cookie-parser');
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2024-06-20',
+});
 
 // middleware
-app.use(cors());
-app.use(express.json());
 dotenv.config();
-app.use(cors({
-  origin: [
-    'http://localhost:5173', 
-    'https://your-live-site.com' 
-  ],
-  credentials: true 
-}));
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "https://your-live-site.com"],
+    credentials: true,
+  })
+);
 app.use(express.json());
-app.use(cookieParser()); 
-
-const verifyFBToken = (req, res, next) => {
-  console.log("headers in the middleware ", req.headers.authorization);
-  next();
-};
+app.use(cookieParser());
 
 // mongodb
 const uri = process.env.MONGO_URI;
@@ -37,23 +34,22 @@ const client = new MongoClient(uri, {
   },
 });
 
-
+// verify token middleware
 const verifyToken = (req, res, next) => {
   const token = req.cookies?.token;
-  
+
   if (!token) {
-    return res.status(401).send({ message: 'unauthorized access' });
+    return res.status(401).send({ message: "unauthorized access" });
   }
 
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(401).send({ message: 'unauthorized access' });
+      return res.status(401).send({ message: "unauthorized access" });
     }
     req.user = decoded;
     next();
   });
 };
-
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
@@ -61,45 +57,46 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
+    // Connect the client to the server
     await client.connect();
     const db = client.db("loanLinkDB");
     const userCollection = db.collection("users");
     const loansCollection = db.collection("loans");
     const applicationCollection = db.collection("applications");
 
-
-    /////////////// JWT //////////////////////////////
+    // ================== AUTH RELATED APIs ==================
 
     // 1. Create Token (Login)
-    app.post('/jwt', async (req, res) => {
+    app.post("/jwt", async (req, res) => {
       const user = req.body;
-      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '5h' });
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "5h",
+      });
 
       res
-        .cookie('token', token, {
+        .cookie("token", token, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
         })
         .send({ success: true });
     });
 
     // 2. Clear Token (Logout)
-    app.post('/logout', async (req, res) => {
+    app.post("/logout", async (req, res) => {
       res
-        .clearCookie('token', {
+        .clearCookie("token", {
           maxAge: 0,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
         })
         .send({ success: true });
     });
 
+    // ================== USER APIs ==================
 
-
-    ///////////////////Users///////////////////////////
-    app.get("/users", async (req, res) => {
+    // Get All Users (Admin Manage Users)
+    app.get("/users", verifyToken, async (req, res) => {
       try {
         const { search } = req.query;
         let query = {};
@@ -118,6 +115,7 @@ async function run() {
       }
     });
 
+    // Create User (Register)
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.createdAt = new Date();
@@ -132,8 +130,8 @@ async function run() {
       res.send(result);
     });
 
-    // 1. Get User Role by Email
-    app.get("/users/:email", verifyToken,  async (req, res) => {
+    // Get User Role by Email
+    app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const query = { email: email };
       const result = await userCollection.findOne(query);
@@ -141,7 +139,7 @@ async function run() {
     });
 
     // Update User Role & Status (Admin Only)
-    app.patch("/users/admin/:id", async (req, res) => {
+    app.patch("/users/admin/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { role, status, suspensionReason } = req.body;
@@ -172,17 +170,17 @@ async function run() {
     });
 
     // Update User Profile by Email (For MyProfile Page)
-    app.patch("/users/:email", async (req, res) => {
+    app.patch("/users/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const { name, photoURL } = req.body;
-        
+
         const filter = { email: email };
         const updateDoc = {
           $set: {
             name: name,
-            photoURL: photoURL
-          }
+            photoURL: photoURL,
+          },
         };
 
         const result = await userCollection.updateOne(filter, updateDoc);
@@ -192,8 +190,9 @@ async function run() {
       }
     });
 
-    ///////////////////loans/////////////////////////
+    // ================== LOAN APIs ==================
 
+    // Get All Loans (Public/Private with Filter)
     app.get("/loans", async (req, res) => {
       try {
         const { search, category } = req.query;
@@ -216,6 +215,7 @@ async function run() {
       }
     });
 
+    // Create New Loan (Manager)
     app.post("/loans", verifyToken, async (req, res) => {
       try {
         const data = req.body;
@@ -234,6 +234,7 @@ async function run() {
       }
     });
 
+    // Get Single Loan Details
     app.get("/loans/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -248,7 +249,8 @@ async function run() {
       }
     });
 
-    app.put("/loans/:id", async (req, res) => {
+    // Update Loan Details
+    app.put("/loans/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const update = req.body;
@@ -269,7 +271,8 @@ async function run() {
       }
     });
 
-    app.delete("/loans/:id", async (req, res) => {
+    // Delete Loan
+    app.delete("/loans/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -283,30 +286,8 @@ async function run() {
       }
     });
 
-    app.put("/loans/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const update = req.body;
-
-        const result = await loansCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              ...update,
-              updatedAt: new Date(),
-            },
-          }
-        );
-
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    //////////////////////////////////
-
-    app.patch("/loans/toggle-home/:id", async (req, res) => {
+    // Toggle Show on Home
+    app.patch("/loans/toggle-home/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -324,16 +305,13 @@ async function run() {
       }
     });
 
-    /////////////////// application///////////////
-
     // ================== APPLICATION APIs ==================
 
-    // 1. Create Loan Application (POST) - User Applies for Loan
-    app.post("/applications", async (req, res) => {
+    // Create Loan Application (User)
+    app.post("/applications", verifyToken, async (req, res) => {
       try {
         const application = req.body;
 
-        // Default fields according to requirements
         const newApplication = {
           ...application,
           status: "pending",
@@ -348,7 +326,7 @@ async function run() {
       }
     });
 
-
+    // Get Applications (Admin/Manager with Filter)
     app.get("/applications", verifyToken, async (req, res) => {
       try {
         const { status } = req.query;
@@ -365,8 +343,8 @@ async function run() {
       }
     });
 
-    // 3. Get Applications by User Email (GET) - For Borrower My Loans
-    app.get("/applications/:email", async (req, res) => {
+    // Get Applications by User Email (Borrower My Loans)
+    app.get("/applications/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const result = await applicationCollection
@@ -378,8 +356,8 @@ async function run() {
       }
     });
 
-    // 4. Update Application Status (PATCH) - For Manager (Approve/Reject)
-    app.patch("/applications/status/:id", async (req, res) => {
+    // Update Application Status (Approve/Reject)
+    app.patch("/applications/status/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body; // 'approved' or 'rejected'
@@ -401,8 +379,8 @@ async function run() {
       }
     });
 
-    // 5. Delete/Cancel Application (DELETE) - Only if pending
-    app.delete("/applications/:id", async (req, res) => {
+    // Delete/Cancel Application (Only if pending)
+    app.delete("/applications/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -413,8 +391,8 @@ async function run() {
       }
     });
 
-    // 6. (Challenge) Update Fee Status (PATCH) - After Payment
-    app.patch("/applications/payment/:id", async (req, res) => {
+    // Update Fee Status (After Payment)
+    app.patch("/applications/payment/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { transactionId } = req.body;
@@ -435,9 +413,10 @@ async function run() {
       }
     });
 
-    //////////////////////////////////////// MANAGER ///////////
+    // ================== STATS APIs ==================
+
     // Manager Stats API
-    app.get("/manager/stats/:email", async (req, res) => {
+    app.get("/manager/stats/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -447,6 +426,7 @@ async function run() {
           .toArray();
         const myLoanIds = myLoans.map((loan) => loan._id.toString());
 
+        // 2. Find applications related to these loans
         const myApplications = await applicationCollection
           .find({ loanId: { $in: myLoanIds } })
           .toArray();
@@ -455,12 +435,14 @@ async function run() {
         const stats = {
           totalLoans: myLoans.length,
           totalApplications: myApplications.length,
-          totalPending: myApplications.filter((app) => app.status === "pending")
-            .length,
+          totalPending: myApplications.filter(
+            (app) => app.status === "pending"
+          ).length,
           totalApproved: myApplications.filter(
             (app) => app.status === "approved"
           ).length,
         };
+
         // 4. Get recent 5 applications
         const recentApplications = myApplications
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -472,12 +454,11 @@ async function run() {
       }
     });
 
-    //////////////// ADMIN /////////////////////
-    app.get("/admin/stats", async (req, res) => {
+    // Admin Stats API
+    app.get("/admin/stats", verifyToken, async (req, res) => {
       try {
         const totalUsers = await userCollection.estimatedDocumentCount();
         const totalLoans = await loansCollection.estimatedDocumentCount();
-
         const totalApplications =
           await applicationCollection.estimatedDocumentCount();
 
@@ -497,16 +478,12 @@ async function run() {
       }
     });
 
-    ////////////////////////// USER STATE ///////////////////
-    // ================== USER (BORROWER) STATS API ==================
-    app.get("/user/stats/:email", async (req, res) => {
+    // User (Borrower) Stats API
+    app.get("/user/stats/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
         // 1. Find all applications by this user
-        // Note: Loan Application করার সময় ইউজার ইমেইল 'email' বা 'userEmail' ফিল্ডে সেভ করেছিলে কিনা চেক করে নিও।
-        // আমি ধরে নিচ্ছি তুমি 'email' বা 'applicantEmail' নামে সেভ করবে।
-        // তোমার অ্যাসাইনমেন্ট রিকোয়ারমেন্ট অনুযায়ী ফর্মের ডাটা সেভ করার সময় ফিল্ডের নাম যা দিবে, এখানে তাই লিখবে।
         const myApplications = await applicationCollection
           .find({ email: email })
           .toArray();
@@ -535,12 +512,37 @@ async function run() {
       }
     });
 
+    // ================== PAYMENT API ==================
+    
+    // Create Payment Intent
+    app.post('/create-payment-intent', verifyToken, async (req, res) => {
+      try {
+        const { price } = req.body;
+        
+        // Stripe expects amount in cents. $10 = 1000 cents
+        const amount = parseInt(price * 100); 
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card']
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret
+        });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+    
+
+    // Ping
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
   } finally {
-    // Ensures that the client will close when you finish/error
     // await client.close();
   }
 }
