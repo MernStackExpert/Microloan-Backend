@@ -133,7 +133,7 @@ async function run() {
     });
 
     // 1. Get User Role by Email
-    app.get("/users/:email", async (req, res) => {
+    app.get("/users/:email", verifyToken,  async (req, res) => {
       const email = req.params.email;
       const query = { email: email };
       const result = await userCollection.findOne(query);
@@ -216,7 +216,7 @@ async function run() {
       }
     });
 
-    app.post("/loans", async (req, res) => {
+    app.post("/loans", verifyToken, async (req, res) => {
       try {
         const data = req.body;
 
@@ -348,12 +348,8 @@ async function run() {
       }
     });
 
-    // 2. Get Applications (GET) - For Admin (All) & Manager (Filter by Status)
-    // Usage:
-    // Admin All: /applications
-    // Manager Pending: /applications?status=pending
-    // Manager Approved: /applications?status=approved
-    app.get("/applications", async (req, res) => {
+
+    app.get("/applications", verifyToken, async (req, res) => {
       try {
         const { status } = req.query;
         let query = {};
