@@ -20,7 +20,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 // middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://your-live-site.com"],
+    origin: ["http://localhost:5173", "https://micro-loan.netlify.app"],
     credentials: true,
   })
 );
@@ -551,6 +551,8 @@ async function run() {
 }
 run().catch(console.dir);
 
-app.listen(port, () => {
-  console.log(`LoanLink server is running on port ${port}`);
-});
+// app.listen(port, () => {
+//   console.log(`LoanLink server is running on port ${port}`);
+// });
+
+export default app;
