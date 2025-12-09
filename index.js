@@ -4,11 +4,22 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 const port = process.env.PORT || 3000;
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 
 // middleware
 app.use(cors());
 app.use(express.json());
 dotenv.config();
+app.use(cors({
+  origin: [
+    'http://localhost:5173', 
+    'https://your-live-site.com' 
+  ],
+  credentials: true 
+}));
+app.use(express.json());
+app.use(cookieParser()); 
 
 const verifyFBToken = (req, res, next) => {
   console.log("headers in the middleware ", req.headers.authorization);
@@ -134,42 +145,7 @@ async function run() {
     });
 
     ///////////////////loans/////////////////////////
-    // app.get("/loans", async (req, res) => {
 
-    //   try {
-    //     const { page = 1, limit = 12, search = "", category } = req.query;
-
-    //     const filter = {};
-
-    //     if (search) {
-    //       filter.title = { $regex: search, $options: "i" };
-    //     }
-
-    //     if (category) {
-    //       filter.category = category;
-    //     }
-
-    //     const skip = (Number(page) - 1) * Number(limit);
-
-    //     const total = await loansCollection.countDocuments(filter);
-
-    //     const data = await loansCollection
-    //       .find(filter)
-    //       .skip(skip)
-    //       .limit(Number(limit))
-    //       .toArray();
-
-    //     res.send({
-    //       total,
-    //       page: Number(page),
-    //       limit: Number(limit),
-    //       data,
-    //     });
-    //   } catch (error) {
-    //     res.status(500).send({ error: error.message });
-    //   }
-    // });
-    // Get All Loans (Without Pagination Limit for Client Side Handling)
     app.get("/loans", async (req, res) => {
       try {
         const { search, category } = req.query;
