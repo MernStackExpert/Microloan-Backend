@@ -112,6 +112,27 @@ async function run() {
       }
     });
 
+    // Update User Profile by Email (For MyProfile Page)
+    app.patch("/users/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const { name, photoURL } = req.body;
+        
+        const filter = { email: email };
+        const updateDoc = {
+          $set: {
+            name: name,
+            photoURL: photoURL
+          }
+        };
+
+        const result = await userCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     ///////////////////loans/////////////////////////
     // app.get("/loans", async (req, res) => {
 
