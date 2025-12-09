@@ -1,19 +1,23 @@
 import express from "express";
-const app = express();
 import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
-const port = process.env.PORT || 3000;
-import Stripe from 'stripe';
+import Stripe from "stripe";
 
+// 1. Configure Dotenv FIRST
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// 2. Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2024-06-20',
 });
 
 // middleware
-dotenv.config();
 app.use(
   cors({
     origin: ["http://localhost:5173", "https://your-live-site.com"],
@@ -52,13 +56,14 @@ const verifyToken = (req, res, next) => {
 };
 
 app.get("/", (req, res) => {
-  res.send("Hello World!");
+  res.send("LoanLink Server is Running");
 });
 
 async function run() {
   try {
     // Connect the client to the server
     await client.connect();
+    
     const db = client.db("loanLinkDB");
     const userCollection = db.collection("users");
     const loansCollection = db.collection("loans");
@@ -66,7 +71,7 @@ async function run() {
 
     // ================== AUTH RELATED APIs ==================
 
-    // 1. Create Token (Login)
+    // Create Token (Login)
     app.post("/jwt", async (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
@@ -82,7 +87,7 @@ async function run() {
         .send({ success: true });
     });
 
-    // 2. Clear Token (Logout)
+    // Clear Token (Logout)
     app.post("/logout", async (req, res) => {
       res
         .clearCookie("token", {
@@ -152,12 +157,10 @@ async function run() {
         if (role) updateDoc.$set.role = role;
         if (status) updateDoc.$set.status = status;
 
-        // If suspending, save the reason
         if (status === "suspended" && suspensionReason) {
           updateDoc.$set.suspensionReason = suspensionReason;
         }
 
-        // If reactivating, clear the reason
         if (status === "active") {
           updateDoc.$set.suspensionReason = null;
         }
@@ -196,7 +199,6 @@ async function run() {
     app.get("/loans", async (req, res) => {
       try {
         const { search, category } = req.query;
-
         const filter = {};
 
         if (search) {
@@ -208,7 +210,6 @@ async function run() {
         }
 
         const data = await loansCollection.find(filter).toArray();
-
         res.send(data);
       } catch (error) {
         res.status(500).send({ error: error.message });
@@ -219,7 +220,6 @@ async function run() {
     app.post("/loans", verifyToken, async (req, res) => {
       try {
         const data = req.body;
-
         const newLoan = {
           ...data,
           showOnHome: data.showOnHome || false,
@@ -238,7 +238,6 @@ async function run() {
     app.get("/loans/:id", async (req, res) => {
       try {
         const id = req.params.id;
-
         const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
 
         if (!loan) return res.status(404).send({ message: "Loan not found" });
@@ -275,11 +274,9 @@ async function run() {
     app.delete("/loans/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-
         const result = await loansCollection.deleteOne({
           _id: new ObjectId(id),
         });
-
         res.send(result);
       } catch (error) {
         res.status(500).send({ error: error.message });
@@ -290,7 +287,6 @@ async function run() {
     app.patch("/loans/toggle-home/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-
         const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
         if (!loan) return res.status(404).send({ message: "Loan not found" });
 
@@ -311,7 +307,6 @@ async function run() {
     app.post("/applications", verifyToken, async (req, res) => {
       try {
         const application = req.body;
-
         const newApplication = {
           ...application,
           status: "pending",
@@ -360,14 +355,13 @@ async function run() {
     app.patch("/applications/status/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const { status } = req.body; // 'approved' or 'rejected'
+        const { status } = req.body;
         const filter = { _id: new ObjectId(id) };
 
         let updateDoc = {
           $set: { status: status },
         };
 
-        // If approved, log the approval date
         if (status === "approved") {
           updateDoc.$set.approvedAt = new Date();
         }
@@ -483,12 +477,10 @@ async function run() {
       try {
         const email = req.params.email;
 
-        // 1. Find all applications by this user
         const myApplications = await applicationCollection
           .find({ email: email })
           .toArray();
 
-        // 2. Calculate Stats
         const stats = {
           totalApplied: myApplications.length,
           totalPending: myApplications.filter((app) => app.status === "pending")
@@ -501,7 +493,6 @@ async function run() {
           ).length,
         };
 
-        // 3. Get recent 5 applications
         const recentApplications = myApplications
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
           .slice(0, 5);
@@ -518,8 +509,6 @@ async function run() {
     app.post('/create-payment-intent', verifyToken, async (req, res) => {
       try {
         const { price } = req.body;
-        
-        // Stripe expects amount in cents. $10 = 1000 cents
         const amount = parseInt(price * 100); 
 
         const paymentIntent = await stripe.paymentIntents.create({
@@ -535,7 +524,21 @@ async function run() {
         res.status(500).send({ error: error.message });
       }
     });
-    
+
+    // Get Payment History by User Email
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+        const query = { email: email, feeStatus: "paid" };
+      
+        const result = await applicationCollection.find(query).sort({ paidAt: -1 }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+
 
     // Ping
     await client.db("admin").command({ ping: 1 });
@@ -549,5 +552,5 @@ async function run() {
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`LoanLink server is running on port ${port}`);
 });
