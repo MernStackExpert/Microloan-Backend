@@ -37,6 +37,24 @@ const client = new MongoClient(uri, {
   },
 });
 
+
+const verifyToken = (req, res, next) => {
+  const token = req.cookies?.token;
+  
+  if (!token) {
+    return res.status(401).send({ message: 'unauthorized access' });
+  }
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: 'unauthorized access' });
+    }
+    req.user = decoded;
+    next();
+  });
+};
+
+
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
@@ -49,6 +67,36 @@ async function run() {
     const userCollection = db.collection("users");
     const loansCollection = db.collection("loans");
     const applicationCollection = db.collection("applications");
+
+
+    /////////////// JWT //////////////////////////////
+
+    // 1. Create Token (Login)
+    app.post('/jwt', async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '5h' });
+
+      res
+        .cookie('token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        })
+        .send({ success: true });
+    });
+
+    // 2. Clear Token (Logout)
+    app.post('/logout', async (req, res) => {
+      res
+        .clearCookie('token', {
+          maxAge: 0,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        })
+        .send({ success: true });
+    });
+
+
 
     ///////////////////Users///////////////////////////
     app.get("/users", async (req, res) => {
