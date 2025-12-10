@@ -20,7 +20,11 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 // middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://micro-loan.netlify.app"],
+    origin: [
+      "http://localhost:5173",
+      "https://loanlink-client.vercel.app", 
+      "https://micro-loan.netlify.app" 
+    ],
     credentials: true,
   })
 );
@@ -62,7 +66,7 @@ app.get("/", (req, res) => {
 async function run() {
   try {
     // Connect the client to the server
-    await client.connect();
+    // await client.connect();
     
     const db = client.db("loanLinkDB");
     const userCollection = db.collection("users");
@@ -355,7 +359,7 @@ async function run() {
     app.patch("/applications/status/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const { status } = req.body;
+        const { status } = req.body; 
         const filter = { _id: new ObjectId(id) };
 
         let updateDoc = {
@@ -389,14 +393,15 @@ async function run() {
     app.patch("/applications/payment/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const { transactionId } = req.body;
+        const { transactionId, price, date } = req.body;
 
         const filter = { _id: new ObjectId(id) };
         const updateDoc = {
           $set: {
             feeStatus: "paid",
             transactionId: transactionId,
-            paidAt: new Date(),
+            paidAmount: price,
+            paidAt: date || new Date(),
           },
         };
 
@@ -409,23 +414,33 @@ async function run() {
 
     // ================== STATS APIs ==================
 
+    // Payment History API
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+        const query = { email: email, feeStatus: "paid" };
+        
+        const result = await applicationCollection.find(query).sort({ paidAt: -1 }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     // Manager Stats API
     app.get("/manager/stats/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
-        // 1. Find all loans posted by this manager
         const myLoans = await loansCollection
           .find({ managerEmail: email })
           .toArray();
         const myLoanIds = myLoans.map((loan) => loan._id.toString());
 
-        // 2. Find applications related to these loans
         const myApplications = await applicationCollection
           .find({ loanId: { $in: myLoanIds } })
           .toArray();
 
-        // 3. Calculate Stats
         const stats = {
           totalLoans: myLoans.length,
           totalApplications: myApplications.length,
@@ -437,7 +452,6 @@ async function run() {
           ).length,
         };
 
-        // 4. Get recent 5 applications
         const recentApplications = myApplications
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
           .slice(0, 5);
@@ -525,21 +539,6 @@ async function run() {
       }
     });
 
-    // Get Payment History by User Email
-    app.get("/payments/:email", verifyToken, async (req, res) => {
-      try {
-        const email = req.params.email;
-        const query = { email: email, feeStatus: "paid" };
-      
-        const result = await applicationCollection.find(query).sort({ paidAt: -1 }).toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-
-
     // Ping
     await client.db("admin").command({ ping: 1 });
     console.log(
@@ -551,8 +550,9 @@ async function run() {
 }
 run().catch(console.dir);
 
-// app.listen(port, () => {
-//   console.log(`LoanLink server is running on port ${port}`);
-// });
+app.listen(port, () => {
+  console.log(`LoanLink server is running on port ${port}`);
+});
+
 
 export default app;
