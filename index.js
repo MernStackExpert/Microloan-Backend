@@ -200,25 +200,40 @@ async function run() {
     // ================== LOAN APIs ==================
 
     // Get All Loans (Public/Private with Filter)
-    app.get("/loans", async (req, res) => {
-      try {
-        const { search, category } = req.query;
-        const filter = {};
+// Get All Loans with Advanced Filtering, Searching and Sorting
+app.get("/loans", async (req, res) => {
+  try {
+    const { search, category, minAmount, maxAmount, sort } = req.query;
+    const filter = {};
 
-        if (search) {
-          filter.title = { $regex: search, $options: "i" };
-        }
+    if (search) {
+      filter.title = { $regex: search, $options: "i" };
+    }
 
-        if (category && category !== "all") {
-          filter.category = category;
-        }
+    // Category Filter
+    if (category && category !== "all") {
+      filter.category = category;
+    }
 
-        const data = await loansCollection.find(filter).toArray();
-        res.send(data);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
+    // Price/Amount Range Filter 
+    if (minAmount || maxAmount) {
+      filter.maxAmount = {};
+      if (minAmount) filter.maxAmount.$gte = parseInt(minAmount);
+      if (maxAmount) filter.maxAmount.$lte = parseInt(maxAmount);
+    }
+
+    // Sorting Logic
+    let sortOptions = {};
+    if (sort === "newest") sortOptions = { createdAt: -1 };
+    if (sort === "low-to-high") sortOptions = { maxAmount: 1 };
+    if (sort === "high-to-low") sortOptions = { maxAmount: -1 };
+
+    const data = await loansCollection.find(filter).sort(sortOptions).toArray();
+    res.send(data);
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
 
     // Create New Loan (Manager)
     app.post("/loans", verifyToken, async (req, res) => {
